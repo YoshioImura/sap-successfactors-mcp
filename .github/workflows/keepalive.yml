@@ -1,0 +1,27 @@
+name: Keep MCP Server Alive
+
+on:
+  schedule:
+    # 15分ごとに実行（UTC時間）
+    - cron: '*/15 * * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Ping MCP Server SSE Endpoint
+        run: |
+          echo "Pinging MCP Server SSE endpoint..."
+          # SSEエンドポイントに接続してサーバーをウェイクアップ
+          timeout 5 curl -N -s https://sap-mcp-server.240ahli42kpb.jp-tok.codeengine.appdomain.cloud/sse > /dev/null 2>&1 || true
+          
+          echo "✅ Server keepalive ping sent"
+        continue-on-error: true
+      
+      - name: Log Timestamp
+        run: |
+          echo "Keepalive executed at: $(date -u)"
+
+# Made with Bob
