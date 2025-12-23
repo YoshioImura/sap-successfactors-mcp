@@ -98,9 +98,9 @@ sap-successfactors-mcp/
 ## 認証情報
 
 ### SAP SuccessFactors
-- **API URL**: https://api68sales.successfactors.com
-- **Company ID**: SFCPART001687
-- **User ID**: Bobapiadmin
+- **API URL**: 環境変数 `SAP_API_URL` で設定
+- **Company ID**: 環境変数 `SAP_COMPANY_ID` で設定
+- **User ID**: 環境変数 `SAP_USER_ID` で設定
 - **認証形式**: `UserID@CompanyID:Password` ✓
 
 ### 重要な発見
