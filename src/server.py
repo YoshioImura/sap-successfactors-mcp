@@ -12,7 +12,9 @@ from .tools.user_management import (
     get_sap_user,
     update_sap_user,
     list_sap_users,
-    test_sap_connection
+    test_sap_connection,
+    add_user_to_admin_role as add_user_to_admin_role_impl,
+    create_sap_user_with_admin_role as create_user_with_admin_role_impl
 )
 from .config.settings import get_settings
 
@@ -40,9 +42,13 @@ def create_user(
     last_name: str = "",
     email: str = "",
     locale: str = "ja_JP",
-    timezone: str = "Asia/Tokyo"
+    timezone: str = "Asia/Tokyo",
+    add_to_admin_role: bool = True
 ) -> dict[str, Any]:
     """SAP SuccessFactorsに新規ユーザーを作成します
+    
+    デフォルトでIBM管理者用権限グループに追加されます。
+    権限グループが存在しない場合は自動的に作成されます。
     
     Args:
         user_id: ユーザーID（必須、一意である必要があります）
@@ -52,11 +58,12 @@ def create_user(
         email: メールアドレス
         locale: ロケール（デフォルト: ja_JP）
         timezone: タイムゾーン（デフォルト: Asia/Tokyo）
+        add_to_admin_role: IBM管理者用権限グループに追加するか（デフォルト: True）
         
     Returns:
         作成結果を含む辞書
     """
-    logger.info(f"Tool called: create_user for {user_id}")
+    logger.info(f"Tool called: create_user for {user_id} (add_to_admin_role={add_to_admin_role})")
     
     return create_sap_user(
         user_id=user_id,
@@ -65,7 +72,8 @@ def create_user(
         last_name=last_name if last_name else None,
         email=email if email else None,
         locale=locale,
-        timezone=timezone
+        timezone=timezone,
+        add_to_admin_role=add_to_admin_role
     )
 
 
@@ -157,6 +165,61 @@ def test_connection() -> dict[str, Any]:
     """
     logger.info("Tool called: test_connection")
     return test_sap_connection()
+
+
+@mcp.tool()
+def add_user_to_admin_role(user_id: str) -> dict[str, Any]:
+    """既存ユーザーをIBM管理者用権限グループに追加します
+    
+    Args:
+        user_id: ユーザーID
+        
+    Returns:
+        追加結果を含む辞書
+    """
+    logger.info(f"Tool called: add_user_to_admin_role for {user_id}")
+    return add_user_to_admin_role_impl(user_id)
+
+
+@mcp.tool()
+def create_user_with_admin_role(
+    user_id: str,
+    username: str,
+    first_name: str = "",
+    last_name: str = "",
+    email: str = "",
+    locale: str = "ja_JP",
+    timezone: str = "Asia/Tokyo"
+) -> dict[str, Any]:
+    """SAP SuccessFactorsに新規ユーザーを作成し、IBM管理者用権限グループに追加します
+    
+    この関数は以下の処理を順次実行します：
+    1. ユーザーアカウントの作成
+    2. IBM管理者用権限グループへの追加
+    
+    Args:
+        user_id: ユーザーID（必須、一意である必要があります）
+        username: ユーザー名（必須、ログイン名として使用）
+        first_name: 名
+        last_name: 姓
+        email: メールアドレス
+        locale: ロケール（デフォルト: ja_JP）
+        timezone: タイムゾーン（デフォルト: Asia/Tokyo）
+        
+    Returns:
+        作成結果を含む辞書
+    """
+    logger.info(f"Tool called: create_user_with_admin_role for {user_id}")
+    
+    return create_user_with_admin_role_impl(
+        user_id=user_id,
+        username=username,
+        first_name=first_name if first_name else None,
+        last_name=last_name if last_name else None,
+        email=email if email else None,
+        locale=locale,
+        timezone=timezone
+    )
 
 
 # ヘルスチェックエンドポイント

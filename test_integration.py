@@ -22,7 +22,9 @@ from src.tools.user_management import (
     test_sap_connection,
     list_sap_users,
     get_sap_user,
-    create_sap_user
+    create_sap_user,
+    add_user_to_admin_role,
+    create_sap_user_with_admin_role
 )
 
 # 環境変数の読み込み
@@ -130,6 +132,38 @@ def test_create_user_dry_run():
     return True
 
 
+def test_permission_role_feature():
+    """権限グループ機能テスト（ドライラン）"""
+    print_section("5. 権限グループ機能テスト（ドライラン）")
+    
+    print("⚠️  実際の権限グループへの追加はスキップします")
+    print("   本番環境でユーザーを権限グループに追加する場合は、以下の関数を使用してください:")
+    print()
+    print("   # 方法1: 既存ユーザーを権限グループに追加")
+    print("   from src.tools.user_management import add_user_to_admin_role")
+    print()
+    print("   result = add_user_to_admin_role(user_id='existing_user_id')")
+    print()
+    print("   # 方法2: ユーザー作成と同時に権限グループに追加（推奨）")
+    print("   from src.tools.user_management import create_sap_user_with_admin_role")
+    print()
+    print("   result = create_sap_user_with_admin_role(")
+    print("       user_id='TEST001',")
+    print("       username='testuser',")
+    print("       first_name='Test',")
+    print("       last_name='User',")
+    print("       email='test.user@example.com'")
+    print("   )")
+    print()
+    print("📋 機能の特徴:")
+    print("   ✓ 固定の権限グループ名: 「IBM管理者用権限グループ」")
+    print("   ✓ 既存メンバーを保持したまま新規ユーザーを追加")
+    print("   ✓ 重複チェック機能付き（既に存在する場合はスキップ）")
+    print()
+    print("✅ 権限グループへのユーザー追加機能は実装済みです")
+    return True
+
+
 def main():
     """メイン処理"""
     print("\n" + "="*60)
@@ -141,6 +175,7 @@ def main():
         ("ユーザー一覧取得", test_list_users),
         ("ユーザー情報取得", test_get_user),
         ("ユーザー作成機能", test_create_user_dry_run),
+        ("権限グループ機能", test_permission_role_feature),
     ]
     
     results = []

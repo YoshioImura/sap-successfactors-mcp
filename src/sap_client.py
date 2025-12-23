@@ -298,5 +298,191 @@ class SAPSuccessFactorsClient:
         except Exception as e:
             logger.error(f"Connection test failed: {str(e)}")
             return False
+    
+    def get_permission_role(self, role_name: str) -> Optional[Dict[str, Any]]:
+        """権限グループ（Permission Role）を名前で取得
+        
+        Args:
+            role_name: 権限グループ名
+            
+        Returns:
+            権限グループ情報、存在しない場合はNone
+        """
+        try:
+            # OData filterを使用して権限グループを検索
+            filter_query = f"roleName eq '{role_name}'"
+            response = self._make_request(
+                method='GET',
+                endpoint='PermissionRole',
+                params={
+                    '$filter': filter_query,
+                    '$format': 'json'
+                }
+            )
+            
+            if 'd' in response and 'results' in response['d']:
+                results = response['d']['results']
+                if results:
+                    logger.info(f"Permission role found: {role_name}")
+                    return results[0]
+            
+            logger.warning(f"Permission role not found: {role_name}")
+            return None
+            
+        except SAPAPIError as e:
+            if e.status_code == 404:
+                return None
+            raise
+    
+    def get_permission_role_members(self, role_name: str) -> List[str]:
+        """権限グループのメンバー一覧を取得
+        
+        Args:
+            role_name: 権限グループ名
+            
+        Returns:
+            メンバーのユーザーIDリスト
+        """
+        role = self.get_permission_role(role_name)
+        if not role:
+            raise SAPAPIError(f"権限グループが見つかりません: {role_name}")
+        
+        # PermissionRoleのpeopleプロパティからメンバーを取得
+        members = []
+        if 'people' in role and 'results' in role['people']:
+            members = [member.get('userId') for member in role['people']['results'] if member.get('userId')]
+        
+        logger.info(f"Found {len(members)} members in role: {role_name}")
+        return members
+    def create_permission_role(self, role_name: str, description: str = "") -> Dict[str, Any]:
+        """権限グループ（Permission Role）を作成
+        
+        Args:
+            role_name: 権限グループ名
+            description: 説明（オプション）
+            
+        Returns:
+            作成された権限グループ情報
+            
+        Raises:
+            SAPAPIError: 権限グループ作成エラー
+        """
+        logger.info(f"Creating permission role: {role_name}")
+        
+        # 権限グループデータ
+        role_data = {
+            'roleName': role_name,
+            'description': description or f"Auto-created role: {role_name}",
+            'people': []  # 初期メンバーは空
+        }
+        
+        try:
+            response = self._make_request(
+                method='POST',
+                endpoint='PermissionRole',
+                data=role_data
+            )
+            
+            if 'd' in response:
+                logger.info(f"Permission role created successfully: {role_name}")
+                return response['d']
+            
+            logger.info(f"Permission role created: {role_name}")
+            return response
+            
+        except SAPAPIError as e:
+            logger.error(f"Failed to create permission role: {str(e)}")
+            raise
+    
+    def ensure_permission_role_exists(self, role_name: str) -> Dict[str, Any]:
+        """権限グループが存在することを確認し、存在しない場合は作成
+        
+        Args:
+            role_name: 権限グループ名
+            
+        Returns:
+            権限グループ情報
+        """
+        # 既存の権限グループを取得
+        role = self.get_permission_role(role_name)
+        
+        if role:
+            logger.info(f"Permission role already exists: {role_name}")
+            return role
+        
+        # 存在しない場合は作成
+        logger.info(f"Permission role not found, creating: {role_name}")
+        return self.create_permission_role(role_name)
+    
+    
+    def add_user_to_permission_role(self, user_id: str, role_name: str, auto_create: bool = True) -> Dict[str, Any]:
+        """権限グループにユーザーを追加（差分追加）
+        
+        既存のメンバーを保持したまま、新しいユーザーを追加します。
+        権限グループが存在しない場合、auto_createがTrueなら自動的に作成します。
+        
+        Args:
+            user_id: 追加するユーザーID
+            role_name: 権限グループ名
+            auto_create: 権限グループが存在しない場合に自動作成するか（デフォルト: True）
+            
+        Returns:
+            更新結果
+            
+        Raises:
+            SAPAPIError: API呼び出しエラー
+        """
+        logger.info(f"Adding user {user_id} to permission role: {role_name}")
+        
+        # 権限グループを取得または作成
+        if auto_create:
+            role = self.ensure_permission_role_exists(role_name)
+        else:
+            role = self.get_permission_role(role_name)
+            if not role:
+                raise SAPAPIError(f"権限グループが見つかりません: {role_name}")
+        
+        role_id = role.get('roleId')
+        if not role_id:
+            raise SAPAPIError(f"権限グループIDが取得できません: {role_name}")
+        
+        # 既存のメンバーを取得
+        existing_members = self.get_permission_role_members(role_name)
+        
+        # ユーザーが既に存在するかチェック
+        if user_id in existing_members:
+            logger.info(f"User {user_id} is already a member of {role_name}")
+            return {
+                'roleId': role_id,
+                'roleName': role_name,
+                'userId': user_id,
+                'status': 'already_exists',
+                'message': f"ユーザーは既に権限グループのメンバーです"
+            }
+        
+        # 新しいメンバーリストを作成（既存 + 新規）
+        new_members = existing_members + [user_id]
+        
+        # 権限グループを更新
+        update_data = {
+            'people': [{'userId': uid} for uid in new_members]
+        }
+        
+        response = self._make_request(
+            method='PUT',
+            endpoint=f"PermissionRole('{role_id}')",
+            data=update_data
+        )
+        
+        logger.info(f"User {user_id} added to permission role {role_name} successfully")
+        
+        return {
+            'roleId': role_id,
+            'roleName': role_name,
+            'userId': user_id,
+            'status': 'added',
+            'totalMembers': len(new_members),
+            'message': f"ユーザーを権限グループに追加しました"
+        }
 
 # Made with Bob
