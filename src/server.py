@@ -42,13 +42,12 @@ def create_user(
     last_name: str = "",
     email: str = "",
     locale: str = "ja_JP",
-    timezone: str = "Asia/Tokyo",
-    add_to_admin_role: bool = True
+    timezone: str = "Asia/Tokyo"
 ) -> dict[str, Any]:
     """SAP SuccessFactorsに新規ユーザーを作成します
     
-    デフォルトでIBM管理者用権限グループに追加されます。
-    権限グループが存在しない場合は自動的に作成されます。
+    注意: 権限グループへの自動追加は現在サポートされていません。
+    ユーザー作成後、SAP管理画面から手動で権限を付与してください。
     
     Args:
         user_id: ユーザーID（必須、一意である必要があります）
@@ -58,12 +57,11 @@ def create_user(
         email: メールアドレス
         locale: ロケール（デフォルト: ja_JP）
         timezone: タイムゾーン（デフォルト: Asia/Tokyo）
-        add_to_admin_role: IBM管理者用権限グループに追加するか（デフォルト: True）
         
     Returns:
         作成結果を含む辞書
     """
-    logger.info(f"Tool called: create_user for {user_id} (add_to_admin_role={add_to_admin_role})")
+    logger.info(f"Tool called: create_user for {user_id}")
     
     return create_sap_user(
         user_id=user_id,
@@ -73,7 +71,7 @@ def create_user(
         email=email if email else None,
         locale=locale,
         timezone=timezone,
-        add_to_admin_role=add_to_admin_role
+        add_to_admin_role=False
     )
 
 
