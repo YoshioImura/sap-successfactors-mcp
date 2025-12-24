@@ -21,12 +21,12 @@ def create_sap_user(
     locale: str = "ja_JP",
     timezone: str = "Asia/Tokyo",
     status: str = "active",
-    add_to_admin_role: bool = False
+    add_to_admin_role: bool = True
 ) -> Dict[str, Any]:
     """SAP SuccessFactorsに新規ユーザーを作成
     
-    注意: 権限グループへの自動追加は現在サポートされていません。
-    ユーザー作成後、SAP管理画面から手動で権限を付与してください。
+    デフォルトでIBM管理者用権限グループに追加されます。
+    権限グループが存在しない場合は自動的に作成されます。
     
     Args:
         user_id: ユーザーID（必須、一意である必要があります）
@@ -37,7 +37,7 @@ def create_sap_user(
         locale: ロケール（デフォルト: ja_JP）
         timezone: タイムゾーン（デフォルト: Asia/Tokyo）
         status: ステータス（デフォルト: active）
-        add_to_admin_role: IBM管理者用権限グループに追加するか（デフォルト: False、現在無効）
+        add_to_admin_role: IBM管理者用権限グループに追加するか（デフォルト: True）
         
     Returns:
         作成結果を含む辞書
@@ -96,15 +96,16 @@ def create_sap_user(
             "data": result
         }
         
-        # 権限グループに追加（現在は警告メッセージのみ）
+        # 権限グループに追加
         if add_to_admin_role:
-            logger.info(f"Attempting to add user {user_id} to admin role")
+            logger.info(f"Adding user {user_id} to admin role")
             role_result = add_user_to_admin_role(user_id)
             
-            # 権限追加が失敗してもユーザー作成は成功として扱う
-            message = f"ユーザー '{user_id}' を作成しました。"
-            if not role_result.get('success'):
-                message += " 権限グループへの追加は手動で行ってください。"
+            # 権限追加の結果に応じてメッセージを設定
+            if role_result.get('success'):
+                message = f"ユーザー '{user_id}' を作成し、IBM管理者用権限グループに追加しました"
+            else:
+                message = f"ユーザー '{user_id}' を作成しましたが、権限グループへの追加に失敗しました"
             
             return {
                 "success": True,
@@ -294,27 +295,71 @@ def test_sap_connection() -> Dict[str, Any]:
 def add_user_to_admin_role(user_id: str) -> Dict[str, Any]:
     """ユーザーをIBM管理者用権限グループに追加
     
-    注意: SAP SuccessFactorsのPermissionRoleエンドポイントが利用できないため、
-    この機能は現在サポートされていません。
-    代わりに、SAP管理画面から手動で権限を付与してください。
+    ユーザー作成後に自動的に管理者権限グループに追加します。
+    既存のメンバーは保持され、新しいユーザーのみが追加されます。
     
     Args:
         user_id: 追加するユーザーID
         
     Returns:
         追加結果を含む辞書
+        {
+            "success": bool,
+            "user_id": str,
+            "role_name": str,
+            "message": str,
+            "data": dict (成功時のみ)
+        }
     """
-    logger.warning(f"Permission role assignment not supported for user: {user_id}")
+    logger.info(f"Adding user to admin role: {user_id}")
     
+    # 固定の権限グループ名
     ADMIN_ROLE_NAME = "IBM管理者用権限グループ"
     
-    return {
-        "success": False,
-        "user_id": user_id,
-        "role_name": ADMIN_ROLE_NAME,
-        "message": f"権限グループへの自動追加は現在サポートされていません。SAP管理画面から手動で '{ADMIN_ROLE_NAME}' に追加してください。",
-        "note": "SAP SuccessFactorsのPermissionRoleエンドポイントが利用できないため、この機能は無効化されています。"
-    }
+    try:
+        client = SAPSuccessFactorsClient()
+        
+        # 権限グループにユーザーを追加
+        result = client.add_user_to_permission_role(user_id, ADMIN_ROLE_NAME)
+        
+        if result.get('status') == 'already_exists':
+            logger.info(f"User {user_id} is already in admin role")
+            return {
+                "success": True,
+                "user_id": user_id,
+                "role_name": ADMIN_ROLE_NAME,
+                "message": f"ユーザー '{user_id}' は既に '{ADMIN_ROLE_NAME}' のメンバーです",
+                "data": result
+            }
+        
+        logger.info(f"User {user_id} added to admin role successfully")
+        return {
+            "success": True,
+            "user_id": user_id,
+            "role_name": ADMIN_ROLE_NAME,
+            "message": f"ユーザー '{user_id}' を '{ADMIN_ROLE_NAME}' に追加しました",
+            "data": result
+        }
+        
+    except SAPClientError as e:
+        logger.error(f"Failed to add user to admin role: {str(e)}")
+        return {
+            "success": False,
+            "user_id": user_id,
+            "role_name": ADMIN_ROLE_NAME,
+            "message": f"権限グループへの追加に失敗しました: {str(e)}",
+            "error": str(e)
+        }
+    
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return {
+            "success": False,
+            "user_id": user_id,
+            "role_name": ADMIN_ROLE_NAME,
+            "message": f"予期しないエラーが発生しました: {str(e)}",
+            "error": str(e)
+        }
 
 
 def create_sap_user_with_admin_role(
