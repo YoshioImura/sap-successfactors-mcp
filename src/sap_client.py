@@ -363,21 +363,26 @@ class SAPSuccessFactorsClient:
         
         logger.info(f"Found {len(members)} members in group: {group_name}")
     
-    def upsert_dynamic_group(self, group_name: str, user_ids: List[str]) -> Dict[str, Any]:
+    def upsert_dynamic_group(self, group_name: str, user_ids: List[str], group_id: str = "8526") -> Dict[str, Any]:
         """Dynamic Groupを作成または更新（upsert）
         
         Args:
             group_name: グループ名
             user_ids: 追加するユーザーIDのリスト
+            group_id: グループID（デフォルト: 8526 = IBM管理者用権限グループ）
             
         Returns:
             upsert結果
         """
         try:
-            logger.info(f"Upserting dynamic group: {group_name} with {len(user_ids)} users")
+            logger.info(f"Upserting dynamic group: {group_name} (ID: {group_id}) with {len(user_ids)} users")
             
-            # upsertペイロードを構築
+            # upsertペイロードを構築（__metadataフィールドを含む）
             payload = {
+                "__metadata": {
+                    "uri": "DynamicGroup"
+                },
+                "groupID": group_id,
                 "groupName": group_name,
                 "groupType": "permission",
                 "dgIncludePools": []
@@ -387,14 +392,40 @@ class SAPSuccessFactorsClient:
             if user_ids:
                 for user_id in user_ids:
                     pool = {
-                        "peoplePoolId": "3600_1",  # 標準のpeople pool ID
-                        "filters": [{
-                            "expressions": [{
-                                "operator": {"token": "eq"},
-                                "values": [{"fieldValue": user_id}]
-                            }],
-                            "field": {"name": "std_username"}
-                        }]
+                        "__metadata": {
+                            "uri": "DGPeoplePool"
+                        },
+                        "filters": {
+                            "__metadata": {
+                                "uri": "DGFilter"
+                            },
+                            "field": {
+                                "__metadata": {
+                                    "uri": "DGField"
+                                },
+                                "name": "std_username"
+                            },
+                            "expressions": [
+                                {
+                                    "__metadata": {
+                                        "uri": "DGExpression"
+                                    },
+                                    "operator": {
+                                        "__metadata": {
+                                            "uri": "DGFieldOperator"
+                                        },
+                                        "token": "eq",
+                                        "label": "="
+                                    },
+                                    "values": {
+                                        "__metadata": {
+                                            "uri": "DGFieldValue"
+                                        },
+                                        "fieldValue": user_id
+                                    }
+                                }
+                            ]
+                        }
                     }
                     payload["dgIncludePools"].append(pool)
             
@@ -406,7 +437,7 @@ class SAPSuccessFactorsClient:
                 data=payload
             )
             
-            logger.info(f"Dynamic group upserted successfully: {group_name}")
+            logger.info(f"Dynamic group upserted successfully: {group_name} (ID: {group_id})")
             return response
             
         except Exception as e:
