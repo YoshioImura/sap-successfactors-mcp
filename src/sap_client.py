@@ -346,23 +346,43 @@ class SAPSuccessFactorsClient:
                 return []
             
             # レスポンスからユーザー名を抽出
-            # getExpandedDynamicGroupByIdのレスポンス構造に応じて調整
+            # 構造: dgIncludePools -> filters -> expressions -> values -> fieldValue
             members = []
             
-            # results配列からユーザー名を取得
-            if 'results' in expanded_group:
-                for user in expanded_group['results']:
-                    if 'username' in user:
-                        members.append(user['username'])
-                    elif 'userId' in user:
-                        members.append(user['userId'])
-                    elif 'Username' in user:
-                        members.append(user['Username'])
+            # dgIncludePoolsを探索
+            if 'dgIncludePools' in expanded_group:
+                pools = expanded_group['dgIncludePools']
+                # resultsがある場合
+                if isinstance(pools, dict) and 'results' in pools:
+                    pools = pools['results']
+                
+                for pool in pools if isinstance(pools, list) else [pools]:
+                    if 'filters' in pool:
+                        filters = pool['filters']
+                        if isinstance(filters, dict) and 'results' in filters:
+                            filters = filters['results']
+                        
+                        for filter_item in filters if isinstance(filters, list) else [filters]:
+                            if 'expressions' in filter_item:
+                                expressions = filter_item['expressions']
+                                if isinstance(expressions, dict) and 'results' in expressions:
+                                    expressions = expressions['results']
+                                
+                                for expr in expressions if isinstance(expressions, list) else [expressions]:
+                                    if 'values' in expr:
+                                        values = expr['values']
+                                        if isinstance(values, dict) and 'results' in values:
+                                            values = values['results']
+                                        
+                                        for value in values if isinstance(values, list) else [values]:
+                                            if 'fieldValue' in value:
+                                                members.append(value['fieldValue'])
             
             logger.info(f"Found {len(members)} members in group ID {group_id}: {members}")
             return members
         except Exception as e:
             logger.error(f"Error getting dynamic group members: {str(e)}")
+            logger.exception("Full traceback:")
             return []
     
     def upsert_dynamic_group(self, group_name: str, user_ids: List[str], group_id: str = "8526") -> Dict[str, Any]:
