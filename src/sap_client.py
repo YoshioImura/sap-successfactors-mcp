@@ -507,8 +507,7 @@ class SAPSuccessFactorsClient:
     def add_user_to_permission_role(self, user_id: str, role_name: str, auto_create: bool = True) -> Dict[str, Any]:
         """権限グループにユーザーを追加（DynamicGroup APIを使用）
         
-        既存のメンバーを保持したまま、新しいユーザーを追加します。
-        権限グループが存在しない場合、auto_createがTrueなら自動的に作成します。
+        DynamicGroupはGETクエリがサポートされていないため、直接upsertで追加します。
         
         Args:
             user_id: 追加するユーザーID
@@ -524,37 +523,10 @@ class SAPSuccessFactorsClient:
         try:
             logger.info(f"Adding user {user_id} to permission role: {role_name}")
             
-            # 既存のDynamic Groupを取得
-            group = self.get_dynamic_group(role_name)
-            
-            if not group:
-                if auto_create:
-                    # グループが存在しない場合は新規作成
-                    logger.info(f"Group {role_name} not found, creating new group")
-                    return self.upsert_dynamic_group(role_name, [user_id])
-                else:
-                    raise SAPAPIError(f"権限グループが見つかりません: {role_name}")
-            
-            # 既存のメンバーを取得
-            existing_members = self.get_dynamic_group_members(role_name)
-            
-            # ユーザーが既に存在するかチェック
-            if user_id in existing_members:
-                logger.info(f"User {user_id} is already a member of {role_name}")
-                return {
-                    'groupName': role_name,
-                    'userId': user_id,
-                    'status': 'already_exists',
-                    'totalMembers': len(existing_members),
-                    'message': f"ユーザーは既に権限グループのメンバーです"
-                }
-            
-            # 新しいメンバーリストを作成（既存 + 新規）
-            new_members = existing_members + [user_id]
-            logger.info(f"Adding user {user_id} to existing members: {existing_members}")
-            
-            # Dynamic Groupを更新
-            result = self.upsert_dynamic_group(role_name, new_members)
+            # DynamicGroupはGETクエリがサポートされていないため、
+            # 直接upsertで新しいユーザーを追加
+            # upsertは既存のグループに追加する形で動作する
+            result = self.upsert_dynamic_group(role_name, [user_id])
             
             logger.info(f"User {user_id} added to permission role {role_name} successfully")
             
@@ -562,7 +534,6 @@ class SAPSuccessFactorsClient:
                 'groupName': role_name,
                 'userId': user_id,
                 'status': 'added',
-                'totalMembers': len(new_members),
                 'message': f"ユーザーを権限グループに追加しました"
             }
             
