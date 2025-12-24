@@ -299,69 +299,69 @@ class SAPSuccessFactorsClient:
             logger.error(f"Connection test failed: {str(e)}")
             return False
     
-    def get_dynamic_group(self, group_name: str) -> Optional[Dict[str, Any]]:
-        """Dynamic Group（権限グループ）を名前で取得
+    def get_dynamic_group_definition(self, group_id: str) -> Optional[Dict[str, Any]]:
+        """Dynamic Group Definitionを取得（既存メンバーの取得用）
         
         Args:
-            group_name: グループ名
+            group_id: グループID
             
         Returns:
-            グループ情報、存在しない場合はNone
+            グループ定義情報、存在しない場合はNone
         """
         try:
-            # OData filterを使用してDynamic Groupを検索
-            filter_query = f"groupName eq '{group_name}' and groupType eq 'permission'"
+            logger.info(f"Getting dynamic group definition for group ID: {group_id}")
             response = self._make_request(
                 method='GET',
-                endpoint='DynamicGroup',
-                params={
-                    '$filter': filter_query,
-                    '$format': 'json',
-                    '$expand': 'dgIncludePools/filters/expressions/values'
-                }
+                endpoint=f"DynamicGroupDefinition('{group_id}')",
+                params={'$format': 'JSON'}
             )
             
-            if 'd' in response and 'results' in response['d']:
-                results = response['d']['results']
-                if results:
-                    logger.info(f"Dynamic group found: {group_name}")
-                    return results[0]
+            if 'd' in response:
+                logger.info(f"Dynamic group definition found for ID: {group_id}")
+                return response['d']
             
-            logger.warning(f"Dynamic group not found: {group_name}")
+            logger.warning(f"Dynamic group definition not found for ID: {group_id}")
             return None
             
         except SAPAPIError as e:
             if e.status_code == 404:
+                logger.warning(f"Dynamic group definition not found (404) for ID: {group_id}")
                 return None
             raise
     
-    def get_dynamic_group_members(self, group_name: str) -> List[str]:
+    def get_dynamic_group_members(self, group_id: str = "8526") -> List[str]:
         """Dynamic Groupのメンバー一覧を取得
         
         Args:
-            group_name: グループ名
+            group_id: グループID（デフォルト: 8526 = IBM管理者用権限グループ）
             
         Returns:
             メンバーのユーザー名リスト
         """
-        group = self.get_dynamic_group(group_name)
-        if not group:
-            raise SAPAPIError(f"Dynamic Groupが見つかりません: {group_name}")
-        
-        # DynamicGroupのdgIncludePoolsからメンバーを取得
-        members = []
-        if 'dgIncludePools' in group and 'results' in group['dgIncludePools']:
-            for pool in group['dgIncludePools']['results']:
-                if 'filters' in pool and 'results' in pool['filters']:
-                    for filter_item in pool['filters']['results']:
-                        if 'expressions' in filter_item and 'results' in filter_item['expressions']:
-                            for expr in filter_item['expressions']['results']:
-                                if 'values' in expr and 'results' in expr['values']:
-                                    for value in expr['values']['results']:
-                                        if 'fieldValue' in value:
-                                            members.append(value['fieldValue'])
-        
-        logger.info(f"Found {len(members)} members in group: {group_name}")
+        try:
+            definition = self.get_dynamic_group_definition(group_id)
+            if not definition:
+                logger.warning(f"Dynamic Group definition not found for ID: {group_id}, returning empty list")
+                return []
+            
+            # includedPeoplePool1-4からメンバーを取得
+            # フォーマット: "(Username = admin1, admin2, admin3)"
+            members = []
+            for i in range(1, 5):  # includedPeoplePool1-4をチェック
+                pool_key = f'includedPeoplePool{i}'
+                if pool_key in definition and definition[pool_key]:
+                    pool_value = definition[pool_key]
+                    # "(Username = admin1, admin2, admin3)" から "admin1, admin2, admin3" を抽出
+                    if 'Username =' in pool_value:
+                        usernames_part = pool_value.split('Username =')[1].strip().rstrip(')')
+                        usernames = [u.strip() for u in usernames_part.split(',')]
+                        members.extend(usernames)
+            
+            logger.info(f"Found {len(members)} members in group ID {group_id}: {members}")
+            return members
+        except Exception as e:
+            logger.error(f"Error getting dynamic group members: {str(e)}")
+            return []
     
     def upsert_dynamic_group(self, group_name: str, user_ids: List[str], group_id: str = "8526") -> Dict[str, Any]:
         """Dynamic Groupを作成または更新（upsert）
@@ -483,36 +483,38 @@ class SAPSuccessFactorsClient:
             logger.error(f"Failed to create permission role: {str(e)}")
             raise
     
-    def ensure_permission_role_exists(self, role_name: str) -> Dict[str, Any]:
-        """権限グループが存在することを確認し、存在しない場合は作成（DynamicGroup APIを使用）
+    def ensure_permission_role_exists(self, role_name: str, group_id: str = "8526") -> Dict[str, Any]:
+        """権限グループが存在することを確認（DynamicGroupDefinition APIを使用）
         
         Args:
             role_name: 権限グループ名
+            group_id: グループID（デフォルト: 8526 = IBM管理者用権限グループ）
             
         Returns:
             権限グループ情報
         """
-        # 既存のDynamic Groupを取得
-        group = self.get_dynamic_group(role_name)
+        # DynamicGroupDefinitionを取得して存在確認
+        definition = self.get_dynamic_group_definition(group_id)
         
-        if group:
-            logger.info(f"Dynamic Group already exists: {role_name}")
-            return group
+        if definition:
+            logger.info(f"Dynamic Group already exists: {role_name} (ID: {group_id})")
+            return definition
         
-        # 存在しない場合は空のメンバーで作成
-        logger.info(f"Dynamic Group not found, creating: {role_name}")
-        return self.upsert_dynamic_group(role_name, [])
+        # 存在しない場合はエラー（グループは事前に作成されている必要がある）
+        logger.error(f"Dynamic Group not found: {role_name} (ID: {group_id})")
+        raise SAPAPIError(f"権限グループが見つかりません: {role_name} (ID: {group_id})")
     
     
-    def add_user_to_permission_role(self, user_id: str, role_name: str, auto_create: bool = True) -> Dict[str, Any]:
-        """権限グループにユーザーを追加（DynamicGroup APIを使用）
+    def add_user_to_permission_role(self, user_id: str, role_name: str, auto_create: bool = True, group_id: str = "8526") -> Dict[str, Any]:
+        """権限グループにユーザーを追加（差分追加）
         
-        DynamicGroupはGETクエリがサポートされていないため、直接upsertで追加します。
+        既存のメンバーを保持したまま、新しいユーザーを追加します。
         
         Args:
             user_id: 追加するユーザーID
             role_name: 権限グループ名
             auto_create: 権限グループが存在しない場合に自動作成するか（デフォルト: True）
+            group_id: グループID（デフォルト: 8526 = IBM管理者用権限グループ）
             
         Returns:
             更新結果
@@ -521,12 +523,29 @@ class SAPSuccessFactorsClient:
             SAPAPIError: API呼び出しエラー
         """
         try:
-            logger.info(f"Adding user {user_id} to permission role: {role_name}")
+            logger.info(f"Adding user {user_id} to permission role: {role_name} (ID: {group_id})")
             
-            # DynamicGroupはGETクエリがサポートされていないため、
-            # 直接upsertで新しいユーザーを追加
-            # upsertは既存のグループに追加する形で動作する
-            result = self.upsert_dynamic_group(role_name, [user_id])
+            # 既存のメンバーを取得
+            existing_members = self.get_dynamic_group_members(group_id)
+            logger.info(f"Existing members: {existing_members}")
+            
+            # ユーザーが既に存在するかチェック
+            if user_id in existing_members:
+                logger.info(f"User {user_id} is already a member of {role_name}")
+                return {
+                    'groupName': role_name,
+                    'userId': user_id,
+                    'status': 'already_exists',
+                    'totalMembers': len(existing_members),
+                    'message': f"ユーザーは既に権限グループのメンバーです"
+                }
+            
+            # 新しいメンバーリストを作成（既存 + 新規）
+            new_members = existing_members + [user_id]
+            logger.info(f"New members list: {new_members}")
+            
+            # upsertで全メンバーを更新
+            result = self.upsert_dynamic_group(role_name, new_members, group_id)
             
             logger.info(f"User {user_id} added to permission role {role_name} successfully")
             
@@ -534,6 +553,7 @@ class SAPSuccessFactorsClient:
                 'groupName': role_name,
                 'userId': user_id,
                 'status': 'added',
+                'totalMembers': len(new_members),
                 'message': f"ユーザーを権限グループに追加しました"
             }
             
