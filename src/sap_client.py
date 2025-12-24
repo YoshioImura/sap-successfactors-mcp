@@ -299,34 +299,34 @@ class SAPSuccessFactorsClient:
             logger.error(f"Connection test failed: {str(e)}")
             return False
     
-    def get_dynamic_group_definition(self, group_id: str) -> Optional[Dict[str, Any]]:
-        """Dynamic Group Definitionを取得（既存メンバーの取得用）
+    def get_expanded_dynamic_group(self, group_id: str) -> Optional[Dict[str, Any]]:
+        """Expanded Dynamic Groupを取得（既存メンバーの取得用）
         
         Args:
             group_id: グループID
             
         Returns:
-            グループ定義情報、存在しない場合はNone
+            展開されたグループ情報（メンバー含む）、存在しない場合はNone
         """
         try:
-            logger.info(f"Getting dynamic group definition for group ID: {group_id}")
-            # グループIDにLサフィックス（Long型）を付ける
+            logger.info(f"Getting expanded dynamic group for group ID: {group_id}")
+            # getExpandedDynamicGroupByIdエンドポイントを使用
             response = self._make_request(
                 method='GET',
-                endpoint=f"DynamicGroupDefinition({group_id}L)",
-                params={'$format': 'JSON'}
+                endpoint=f"getExpandedDynamicGroupById",
+                params={'groupId': f'{group_id}L'}
             )
             
             if 'd' in response:
-                logger.info(f"Dynamic group definition found for ID: {group_id}")
+                logger.info(f"Expanded dynamic group found for ID: {group_id}")
                 return response['d']
             
-            logger.warning(f"Dynamic group definition not found for ID: {group_id}")
+            logger.warning(f"Expanded dynamic group not found for ID: {group_id}")
             return None
             
         except SAPAPIError as e:
             if e.status_code == 404:
-                logger.warning(f"Dynamic group definition not found (404) for ID: {group_id}")
+                logger.warning(f"Expanded dynamic group not found (404) for ID: {group_id}")
                 return None
             raise
     
@@ -340,23 +340,24 @@ class SAPSuccessFactorsClient:
             メンバーのユーザー名リスト
         """
         try:
-            definition = self.get_dynamic_group_definition(group_id)
-            if not definition:
-                logger.warning(f"Dynamic Group definition not found for ID: {group_id}, returning empty list")
+            expanded_group = self.get_expanded_dynamic_group(group_id)
+            if not expanded_group:
+                logger.warning(f"Expanded dynamic group not found for ID: {group_id}, returning empty list")
                 return []
             
-            # includedPeoplePool1-4からメンバーを取得
-            # フォーマット: "(Username = admin1, admin2, admin3)"
+            # レスポンスからユーザー名を抽出
+            # getExpandedDynamicGroupByIdのレスポンス構造に応じて調整
             members = []
-            for i in range(1, 5):  # includedPeoplePool1-4をチェック
-                pool_key = f'includedPeoplePool{i}'
-                if pool_key in definition and definition[pool_key]:
-                    pool_value = definition[pool_key]
-                    # "(Username = admin1, admin2, admin3)" から "admin1, admin2, admin3" を抽出
-                    if 'Username =' in pool_value:
-                        usernames_part = pool_value.split('Username =')[1].strip().rstrip(')')
-                        usernames = [u.strip() for u in usernames_part.split(',')]
-                        members.extend(usernames)
+            
+            # results配列からユーザー名を取得
+            if 'results' in expanded_group:
+                for user in expanded_group['results']:
+                    if 'username' in user:
+                        members.append(user['username'])
+                    elif 'userId' in user:
+                        members.append(user['userId'])
+                    elif 'Username' in user:
+                        members.append(user['Username'])
             
             logger.info(f"Found {len(members)} members in group ID {group_id}: {members}")
             return members
@@ -494,12 +495,12 @@ class SAPSuccessFactorsClient:
         Returns:
             権限グループ情報
         """
-        # DynamicGroupDefinitionを取得して存在確認
-        definition = self.get_dynamic_group_definition(group_id)
+        # Expanded Dynamic Groupを取得して存在確認
+        expanded_group = self.get_expanded_dynamic_group(group_id)
         
-        if definition:
+        if expanded_group:
             logger.info(f"Dynamic Group already exists: {role_name} (ID: {group_id})")
-            return definition
+            return expanded_group
         
         # 存在しない場合はエラー（グループは事前に作成されている必要がある）
         logger.error(f"Dynamic Group not found: {role_name} (ID: {group_id})")
