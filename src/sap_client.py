@@ -299,34 +299,35 @@ class SAPSuccessFactorsClient:
             logger.error(f"Connection test failed: {str(e)}")
             return False
     
-    def get_permission_role(self, role_name: str) -> Optional[Dict[str, Any]]:
-        """権限グループ（Permission Role）を名前で取得
+    def get_dynamic_group(self, group_name: str) -> Optional[Dict[str, Any]]:
+        """Dynamic Group（権限グループ）を名前で取得
         
         Args:
-            role_name: 権限グループ名
+            group_name: グループ名
             
         Returns:
-            権限グループ情報、存在しない場合はNone
+            グループ情報、存在しない場合はNone
         """
         try:
-            # OData filterを使用して権限グループを検索
-            filter_query = f"roleName eq '{role_name}'"
+            # OData filterを使用してDynamic Groupを検索
+            filter_query = f"groupName eq '{group_name}' and groupType eq 'permission'"
             response = self._make_request(
                 method='GET',
-                endpoint='PermissionRole',
+                endpoint='DynamicGroup',
                 params={
                     '$filter': filter_query,
-                    '$format': 'json'
+                    '$format': 'json',
+                    '$expand': 'dgIncludePools/filters/expressions/values'
                 }
             )
             
             if 'd' in response and 'results' in response['d']:
                 results = response['d']['results']
                 if results:
-                    logger.info(f"Permission role found: {role_name}")
+                    logger.info(f"Dynamic group found: {group_name}")
                     return results[0]
             
-            logger.warning(f"Permission role not found: {role_name}")
+            logger.warning(f"Dynamic group not found: {group_name}")
             return None
             
         except SAPAPIError as e:
@@ -334,26 +335,83 @@ class SAPSuccessFactorsClient:
                 return None
             raise
     
-    def get_permission_role_members(self, role_name: str) -> List[str]:
-        """権限グループのメンバー一覧を取得
+    def get_dynamic_group_members(self, group_name: str) -> List[str]:
+        """Dynamic Groupのメンバー一覧を取得
         
         Args:
-            role_name: 権限グループ名
+            group_name: グループ名
             
         Returns:
-            メンバーのユーザーIDリスト
+            メンバーのユーザー名リスト
         """
-        role = self.get_permission_role(role_name)
-        if not role:
-            raise SAPAPIError(f"権限グループが見つかりません: {role_name}")
+        group = self.get_dynamic_group(group_name)
+        if not group:
+            raise SAPAPIError(f"Dynamic Groupが見つかりません: {group_name}")
         
-        # PermissionRoleのpeopleプロパティからメンバーを取得
+        # DynamicGroupのdgIncludePoolsからメンバーを取得
         members = []
-        if 'people' in role and 'results' in role['people']:
-            members = [member.get('userId') for member in role['people']['results'] if member.get('userId')]
+        if 'dgIncludePools' in group and 'results' in group['dgIncludePools']:
+            for pool in group['dgIncludePools']['results']:
+                if 'filters' in pool and 'results' in pool['filters']:
+                    for filter_item in pool['filters']['results']:
+                        if 'expressions' in filter_item and 'results' in filter_item['expressions']:
+                            for expr in filter_item['expressions']['results']:
+                                if 'values' in expr and 'results' in expr['values']:
+                                    for value in expr['values']['results']:
+                                        if 'fieldValue' in value:
+                                            members.append(value['fieldValue'])
         
-        logger.info(f"Found {len(members)} members in role: {role_name}")
-        return members
+        logger.info(f"Found {len(members)} members in group: {group_name}")
+    
+    def upsert_dynamic_group(self, group_name: str, user_ids: List[str]) -> Dict[str, Any]:
+        """Dynamic Groupを作成または更新（upsert）
+        
+        Args:
+            group_name: グループ名
+            user_ids: 追加するユーザーIDのリスト
+            
+        Returns:
+            upsert結果
+        """
+        try:
+            logger.info(f"Upserting dynamic group: {group_name} with {len(user_ids)} users")
+            
+            # upsertペイロードを構築
+            payload = {
+                "groupName": group_name,
+                "groupType": "permission",
+                "dgIncludePools": []
+            }
+            
+            # 各ユーザーに対してフィルター式を作成
+            if user_ids:
+                for user_id in user_ids:
+                    pool = {
+                        "peoplePoolId": "3600_1",  # 標準のpeople pool ID
+                        "filters": [{
+                            "expressions": [{
+                                "operator": {"token": "eq"},
+                                "values": [{"fieldValue": user_id}]
+                            }],
+                            "field": {"name": "std_username"}
+                        }]
+                    }
+                    payload["dgIncludePools"].append(pool)
+            
+            # upsert APIを呼び出し
+            response = self._make_request(
+                method='POST',
+                endpoint='upsert',
+                params={'$format': 'json'},
+                data=payload
+            )
+            
+            logger.info(f"Dynamic group upserted successfully: {group_name}")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Failed to upsert dynamic group: {str(e)}")
+            raise SAPAPIError(f"Dynamic Groupのupsertに失敗しました: {str(e)}")
     def create_permission_role(self, role_name: str, description: str = "") -> Dict[str, Any]:
         """権限グループ（Permission Role）を作成
         
@@ -395,7 +453,7 @@ class SAPSuccessFactorsClient:
             raise
     
     def ensure_permission_role_exists(self, role_name: str) -> Dict[str, Any]:
-        """権限グループが存在することを確認し、存在しない場合は作成
+        """権限グループが存在することを確認し、存在しない場合は作成（DynamicGroup APIを使用）
         
         Args:
             role_name: 権限グループ名
@@ -403,20 +461,20 @@ class SAPSuccessFactorsClient:
         Returns:
             権限グループ情報
         """
-        # 既存の権限グループを取得
-        role = self.get_permission_role(role_name)
+        # 既存のDynamic Groupを取得
+        group = self.get_dynamic_group(role_name)
         
-        if role:
-            logger.info(f"Permission role already exists: {role_name}")
-            return role
+        if group:
+            logger.info(f"Dynamic Group already exists: {role_name}")
+            return group
         
-        # 存在しない場合は作成
-        logger.info(f"Permission role not found, creating: {role_name}")
-        return self.create_permission_role(role_name)
+        # 存在しない場合は空のメンバーで作成
+        logger.info(f"Dynamic Group not found, creating: {role_name}")
+        return self.upsert_dynamic_group(role_name, [])
     
     
     def add_user_to_permission_role(self, user_id: str, role_name: str, auto_create: bool = True) -> Dict[str, Any]:
-        """権限グループにユーザーを追加（差分追加）
+        """権限グループにユーザーを追加（DynamicGroup APIを使用）
         
         既存のメンバーを保持したまま、新しいユーザーを追加します。
         権限グループが存在しない場合、auto_createがTrueなら自動的に作成します。
@@ -432,57 +490,53 @@ class SAPSuccessFactorsClient:
         Raises:
             SAPAPIError: API呼び出しエラー
         """
-        logger.info(f"Adding user {user_id} to permission role: {role_name}")
-        
-        # 権限グループを取得または作成
-        if auto_create:
-            role = self.ensure_permission_role_exists(role_name)
-        else:
-            role = self.get_permission_role(role_name)
-            if not role:
-                raise SAPAPIError(f"権限グループが見つかりません: {role_name}")
-        
-        role_id = role.get('roleId')
-        if not role_id:
-            raise SAPAPIError(f"権限グループIDが取得できません: {role_name}")
-        
-        # 既存のメンバーを取得
-        existing_members = self.get_permission_role_members(role_name)
-        
-        # ユーザーが既に存在するかチェック
-        if user_id in existing_members:
-            logger.info(f"User {user_id} is already a member of {role_name}")
+        try:
+            logger.info(f"Adding user {user_id} to permission role: {role_name}")
+            
+            # 既存のDynamic Groupを取得
+            group = self.get_dynamic_group(role_name)
+            
+            if not group:
+                if auto_create:
+                    # グループが存在しない場合は新規作成
+                    logger.info(f"Group {role_name} not found, creating new group")
+                    return self.upsert_dynamic_group(role_name, [user_id])
+                else:
+                    raise SAPAPIError(f"権限グループが見つかりません: {role_name}")
+            
+            # 既存のメンバーを取得
+            existing_members = self.get_dynamic_group_members(role_name)
+            
+            # ユーザーが既に存在するかチェック
+            if user_id in existing_members:
+                logger.info(f"User {user_id} is already a member of {role_name}")
+                return {
+                    'groupName': role_name,
+                    'userId': user_id,
+                    'status': 'already_exists',
+                    'totalMembers': len(existing_members),
+                    'message': f"ユーザーは既に権限グループのメンバーです"
+                }
+            
+            # 新しいメンバーリストを作成（既存 + 新規）
+            new_members = existing_members + [user_id]
+            logger.info(f"Adding user {user_id} to existing members: {existing_members}")
+            
+            # Dynamic Groupを更新
+            result = self.upsert_dynamic_group(role_name, new_members)
+            
+            logger.info(f"User {user_id} added to permission role {role_name} successfully")
+            
             return {
-                'roleId': role_id,
-                'roleName': role_name,
+                'groupName': role_name,
                 'userId': user_id,
-                'status': 'already_exists',
-                'message': f"ユーザーは既に権限グループのメンバーです"
+                'status': 'added',
+                'totalMembers': len(new_members),
+                'message': f"ユーザーを権限グループに追加しました"
             }
-        
-        # 新しいメンバーリストを作成（既存 + 新規）
-        new_members = existing_members + [user_id]
-        
-        # 権限グループを更新
-        update_data = {
-            'people': [{'userId': uid} for uid in new_members]
-        }
-        
-        response = self._make_request(
-            method='PUT',
-            endpoint=f"PermissionRole('{role_id}')",
-            data=update_data
-        )
-        
-        logger.info(f"User {user_id} added to permission role {role_name} successfully")
-        
-        return {
-            'roleId': role_id,
-            'roleName': role_name,
-            'userId': user_id,
-            'status': 'added',
-            'totalMembers': len(new_members),
-            'message': f"ユーザーを権限グループに追加しました"
-        }
+            
+        except Exception as e:
+            logger.error(f"Failed to add user to permission role: {str(e)}")
+            raise SAPAPIError(f"権限グループへのユーザー追加に失敗しました: {str(e)}")
 
 # Made with Bob
