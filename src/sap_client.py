@@ -310,9 +310,10 @@ class SAPSuccessFactorsClient:
         """
         try:
             logger.info(f"Getting dynamic group definition for group ID: {group_id}")
+            # グループIDにLサフィックス（Long型）を付ける
             response = self._make_request(
                 method='GET',
-                endpoint=f"DynamicGroupDefinition('{group_id}')",
+                endpoint=f"DynamicGroupDefinition({group_id}L)",
                 params={'$format': 'JSON'}
             )
             
